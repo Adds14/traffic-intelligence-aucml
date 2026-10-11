@@ -1,0 +1,84 @@
+# Project Configuration
+# Spatio-Temporal ML for Urban Traffic Congestion Prediction
+
+project:
+  name: "traffic-congestion-ml"
+  title: "Spatio-Temporal Machine Learning for Urban Traffic Congestion Prediction and Dynamic Risk Mapping"
+
+# Dataset Configuration
+dataset:
+  name: "PeMS04"
+  source: "Caltrans Performance Measurement System - District 4 (San Francisco Bay Area)"
+  time_period: "January-February 2018"
+  raw_file: "data/raw/pems04.npz"
+  adj_file: "data/raw/distance.csv"
+  num_sensors: 307
+  num_timesteps: 16992
+  num_features: 3  # flow, occupancy, speed
+  feature_names: ["flow", "occupancy", "speed"]
+  target_feature: "flow"  # Primary forecasting target (index 0)
+  target_feature_index: 0
+  sampling_interval_minutes: 5
+  samples_per_hour: 12
+
+# Data Splitting (chronological)
+splitting:
+  train_ratio: 0.6
+  val_ratio: 0.2
+  test_ratio: 0.2
+
+# Preprocessing
+preprocessing:
+  normalization: "zscore"  # z-score standardization
+  missing_value_strategy: "linear_interpolation"
+  history_window: 12   # 12 steps = 60 minutes
+  forecast_horizons: [3, 6, 12]  # 15min, 30min, 60min (in 5-min steps)
+
+# Model Configurations
+models:
+  persistence:
+    name: "Persistence Baseline"
+    description: "Uses the last observed value as prediction for all future horizons"
+  
+  pdformer:
+    name: "PDFormer"
+    description: "Propagation Delay-aware Dynamic Long-range Transformer"
+    paper: "Jiang et al., AAAI 2023"
+    repo: "https://github.com/BUAABIGSCity/PDFormer"
+    framework: "LibCity (Bigscity-LibCity)"
+    history_window: 12
+    prediction_window: 12
+    batch_size: 32
+    learning_rate: 0.001
+    epochs: 100
+    early_stopping_patience: 15
+
+# Evaluation
+evaluation:
+  metrics: ["MAE", "RMSE"]
+  horizons_minutes: [15, 30, 60]
+  horizons_steps: [3, 6, 12]
+
+# Congestion Thresholds (flow-based, vehicles per 5 minutes)
+# These will be calibrated based on actual data distribution
+congestion:
+  target: "flow"
+  thresholds:
+    free_flow_max: null      # To be set after EDA
+    moderate_max: null        # To be set after EDA
+    heavy_max: null           # To be set after EDA
+    severe_above: null        # To be set after EDA
+  categories: ["Free Flow", "Moderate", "Heavy", "Severe"]
+
+# Paths
+paths:
+  raw_data: "data/raw/"
+  processed_data: "data/processed/"
+  predictions: "outputs/predictions/"
+  metrics: "outputs/metrics/"
+  figures: "outputs/figures/"
+  checkpoints: "outputs/checkpoints/"
+  configs: "configs/"
+
+# Reproducibility
+seed: 42

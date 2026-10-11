@@ -1,0 +1,21 @@
+{
+  "thresholds": {
+    "q25": 83.0,
+    "q50": 179.0,
+    "q75": 315.0
+  },
+  "categories": [
+    "Free Flow",
+    "Moderate",
+    "Heavy",
+    "Severe"
+  ],
+  "colors": [
+    "#4CAF50",
+    "#FFC107",
+    "#FF9800",
+    "#F44336"
+  ],
+  "description": "Flow-based congestion thresholds (vehicles per 5 minutes)",
+  "method": "Quantile-based from training data distribution"
+}
