@@ -1,0 +1,8 @@
+# Development and Testing Dependencies
+-r requirements.txt
+jupyter>=1.0.0
+nbformat>=5.9.0
+nbconvert>=7.0.0
+ipykernel>=6.25.0
+pytest>=7.4.0
+h5py>=3.9.0

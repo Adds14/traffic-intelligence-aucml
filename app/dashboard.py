@@ -296,30 +296,41 @@ def load_metrics(model_name):
 
 
 @st.cache_data
-def load_predictions(model_name):
-    """Load model predictions and ground truth targets from .npz."""
+def load_predictions(model_name, max_samples=250):
+    """Load model predictions and ground truth targets from .npz.
+    Slices up to max_samples (250) and casts to float32 to stay well within
+    Streamlit Community Cloud 1GB container memory limits.
+    """
     path = os.path.join(PATHS['predictions'], f"{model_name.lower()}_predictions.npz")
     if os.path.exists(path):
         data = np.load(path)
+        preds = data['predictions'][:max_samples].astype(np.float32)
+        targets = data['targets'][:max_samples].astype(np.float32) if 'targets' in data else None
         return {
-            'predictions': data['predictions'],
-            'targets': data['targets'] if 'targets' in data else None
+            'predictions': preds,
+            'targets': targets
         }
     return None
 
 
 @st.cache_data
-def load_test_inputs():
-    """Load held-out historical test windows and scaler."""
+def load_test_inputs(max_samples=250):
+    """Load held-out historical test windows and scaler.
+    Uses memory mapping (mmap_mode='r') to avoid loading the full 100MB arrays into RAM.
+    """
     x_path = os.path.join(PATHS['processed'], 'test_x.npy')
     y_path = os.path.join(PATHS['processed'], 'test_y.npy')
     s_path = os.path.join(PATHS['processed'], 'scaler.npz')
 
     if os.path.exists(x_path) and os.path.exists(y_path) and os.path.exists(s_path):
         scaler = np.load(s_path)
+        x_mmap = np.load(x_path, mmap_mode='r')
+        y_mmap = np.load(y_path, mmap_mode='r')
+        test_x = np.array(x_mmap[:max_samples], dtype=np.float32)
+        test_y = np.array(y_mmap[:max_samples], dtype=np.float32)
         return {
-            'test_x': np.load(x_path),
-            'test_y': np.load(y_path),
+            'test_x': test_x,
+            'test_y': test_y,
             'mean': float(scaler['mean']),
             'std': float(scaler['std'])
         }
