@@ -1,235 +1,219 @@
-"""
-PDFormer: Propagation Delay-Aware Spatio-Temporal Transformer
-=============================================================
-Architecture implementation adapted from:
-Jiang et al. (AAAI 2023), "PDFormer: Propagation Delay-aware Dynamic
-Long-range Transformer for Traffic Flow Prediction"
+"""PDFormer-style spatio-temporal transformer for traffic forecasting.
 
-This module provides a clean, self-contained PyTorch implementation
-preserving the core architectural mechanisms:
-1. Spatial & Temporal Input Embeddings (Learned Spatial Node + Positional Embeddings)
-2. Geographic Masked Spatial Self-Attention (Road network topology constraint)
-3. Temporal Self-Attention (Delay-aware multi-horizon temporal dynamics)
-4. Spatio-Temporal Feed-Forward Fusion Network
-5. Multi-Horizon Forecast Projection Head
-
-Optimized for numerical stability, clean gradient flow, and efficient CPU/GPU execution.
+The encoder follows the public AAAI 2023 PDFormer implementation's core
+mechanisms: temporal attention, short-range geographic attention, long-range
+semantic attention, and a traffic-pattern feature transform that enriches the
+geographic keys.  The project keeps its standalone PyTorch/data pipeline and
+builds the semantic and pattern inputs from its chronological training split.
 """
 
 import math
+
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 
-class SpatialTemporalEmbedding(nn.Module):
-    """Embeds input flow values, spatial node identities, and temporal positions."""
-    def __init__(self, num_nodes, in_dim=1, d_model=32, history_len=12):
+class DataEmbedding(nn.Module):
+    """Flow, within-window position, and Laplacian node embeddings."""
+
+    def __init__(self, num_nodes, d_model, lap_pos_enc, dropout=0.1):
         super().__init__()
-        self.feature_proj = nn.Linear(in_dim, d_model)
-        self.node_emb = nn.Parameter(torch.randn(1, 1, num_nodes, d_model) * 0.02)
-        self.temporal_emb = nn.Parameter(torch.randn(1, history_len, 1, d_model) * 0.02)
-        self.dropout = nn.Dropout(p=0.1)
+        self.value_embedding = nn.Linear(1, d_model)
+        self.node_embedding = nn.Linear(lap_pos_enc.shape[-1], d_model, bias=False)
+        self.dropout = nn.Dropout(dropout)
+        self.register_buffer("lap_pos_enc", torch.as_tensor(lap_pos_enc, dtype=torch.float32))
+        self.num_nodes = num_nodes
+        self.d_model = d_model
 
     def forward(self, x):
-        # x: (B, T, N, in_dim) or (B, T, N)
-        if x.dim() == 3:
-            x = x.unsqueeze(-1)
-        feat_emb = self.feature_proj(x)  # (B, T, N, d_model)
-        h = feat_emb + self.node_emb + self.temporal_emb
-        return self.dropout(h)
-
-
-class GeographicMaskedSpatialAttention(nn.Module):
-    """Multi-Head Spatial Self-Attention constrained by the geographic adjacency graph."""
-    def __init__(self, d_model=32, num_heads=2, dropout=0.1):
-        super().__init__()
-        assert d_model % num_heads == 0, "d_model must be divisible by num_heads"
-        self.d_model = d_model
-        self.num_heads = num_heads
-        self.d_k = d_model // num_heads
-
-        self.q_proj = nn.Linear(d_model, d_model)
-        self.k_proj = nn.Linear(d_model, d_model)
-        self.v_proj = nn.Linear(d_model, d_model)
-        self.out_proj = nn.Linear(d_model, d_model)
-        self.dropout = nn.Dropout(dropout)
-
-    def forward(self, x, geo_mask=None):
-        # x: (B, T, N, D)
-        B, T, N, D = x.shape
-        # Flatten B and T to compute spatial attention across N nodes
-        x_flat = x.view(B * T, N, D)
-
-        q = self.q_proj(x_flat).view(B * T, N, self.num_heads, self.d_k).transpose(1, 2)
-        k = self.k_proj(x_flat).view(B * T, N, self.num_heads, self.d_k).transpose(1, 2)
-        v = self.v_proj(x_flat).view(B * T, N, self.num_heads, self.d_k).transpose(1, 2)
-
-        scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.d_k)
-        # scores: (B*T, num_heads, N, N)
-
-        if geo_mask is not None:
-            # geo_mask: (N, N) where 1 indicates connected/relevant, 0 unconnected
-            # Additive penalty for distant/unconnected nodes while allowing learnable flow
-            mask_penalty = (1.0 - geo_mask) * -1e4
-            scores = scores + mask_penalty.unsqueeze(0).unsqueeze(0)
-
-        attn_weights = F.softmax(scores, dim=-1)
-        attn_weights = self.dropout(attn_weights)
-
-        context = torch.matmul(attn_weights, v)  # (B*T, num_heads, N, d_k)
-        context = context.transpose(1, 2).contiguous().view(B * T, N, D)
-        out = self.out_proj(context).view(B, T, N, D)
-        return out
-
-
-class TemporalAttention(nn.Module):
-    """Multi-Head Temporal Self-Attention over historical window steps."""
-    def __init__(self, d_model=32, num_heads=2, dropout=0.1):
-        super().__init__()
-        assert d_model % num_heads == 0
-        self.d_model = d_model
-        self.num_heads = num_heads
-        self.d_k = d_model // num_heads
-
-        self.q_proj = nn.Linear(d_model, d_model)
-        self.k_proj = nn.Linear(d_model, d_model)
-        self.v_proj = nn.Linear(d_model, d_model)
-        self.out_proj = nn.Linear(d_model, d_model)
-        self.dropout = nn.Dropout(dropout)
-
-    def forward(self, x):
-        # x: (B, T, N, D)
-        B, T, N, D = x.shape
-        # Permute to (B, N, T, D) then flatten B*N
-        x_flat = x.permute(0, 2, 1, 3).contiguous().view(B * N, T, D)
-
-        q = self.q_proj(x_flat).view(B * N, T, self.num_heads, self.d_k).transpose(1, 2)
-        k = self.k_proj(x_flat).view(B * N, T, self.num_heads, self.d_k).transpose(1, 2)
-        v = self.v_proj(x_flat).view(B * N, T, self.num_heads, self.d_k).transpose(1, 2)
-
-        scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.d_k)
-        attn_weights = F.softmax(scores, dim=-1)
-        attn_weights = self.dropout(attn_weights)
-
-        context = torch.matmul(attn_weights, v)
-        context = context.transpose(1, 2).contiguous().view(B * N, T, D)
-        out = self.out_proj(context).view(B, N, T, D).permute(0, 2, 1, 3).contiguous()
-        return out
-
-
-class SpatioTemporalTransformerLayer(nn.Module):
-    """A single layer of PDFormer: Spatial Attention -> Temporal Attention -> Feed Forward."""
-    def __init__(self, d_model=32, num_heads=2, d_ff=64, dropout=0.1):
-        super().__init__()
-        self.spatial_attn = GeographicMaskedSpatialAttention(d_model, num_heads, dropout)
-        self.norm1 = nn.LayerNorm(d_model)
-
-        self.temporal_attn = TemporalAttention(d_model, num_heads, dropout)
-        self.norm2 = nn.LayerNorm(d_model)
-
-        self.ffn = nn.Sequential(
-            nn.Linear(d_model, d_ff),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(d_ff, d_model),
-            nn.Dropout(dropout)
+        # x: batch, time, node
+        _, steps, nodes = x.shape
+        position = torch.arange(steps, device=x.device, dtype=x.dtype)
+        div_term = torch.exp(
+            torch.arange(0, self.d_model, 2, device=x.device, dtype=x.dtype)
+            * (-math.log(10000.0) / self.d_model)
         )
-        self.norm3 = nn.LayerNorm(d_model)
+        pos = torch.zeros(steps, self.d_model, device=x.device, dtype=x.dtype)
+        pos[:, 0::2] = torch.sin(position[:, None] * div_term)
+        pos[:, 1::2] = torch.cos(position[:, None] * div_term[: pos[:, 1::2].shape[-1]])
+        spatial = self.node_embedding(self.lap_pos_enc[:nodes]).view(1, 1, nodes, self.d_model)
+        return self.dropout(self.value_embedding(x.unsqueeze(-1)) + pos.view(1, steps, 1, -1) + spatial)
 
-    def forward(self, x, geo_mask=None):
-        # 1. Geographic-masked Spatial Attention + Residual
-        s_out = self.spatial_attn(x, geo_mask)
-        x = self.norm1(x + s_out)
 
-        # 2. Temporal Attention + Residual
-        t_out = self.temporal_attn(x)
-        x = self.norm2(x + t_out)
+class STSelfAttention(nn.Module):
+    """Three-way attention plus PDFormer's pattern-based delay transform."""
 
-        # 3. Position-wise Feed Forward + Residual
-        f_out = self.ffn(x)
-        x = self.norm3(x + f_out)
-        return x
+    def __init__(self, dim, geo_heads=4, sem_heads=2, temporal_heads=2, dropout=0.1):
+        super().__init__()
+        total_heads = geo_heads + sem_heads + temporal_heads
+        if dim % total_heads:
+            raise ValueError("d_model must be divisible by the sum of attention heads")
+        self.geo_heads, self.sem_heads, self.temporal_heads = geo_heads, sem_heads, temporal_heads
+        self.head_dim = dim // total_heads
+        self.geo_dim = self.head_dim * geo_heads
+        self.sem_dim = self.head_dim * sem_heads
+        self.temporal_dim = self.head_dim * temporal_heads
+        self.scale = self.head_dim ** -0.5
+        self.pattern_embedding = nn.Linear(3, dim)
+
+        def conv(out_dim):
+            return nn.Conv2d(dim, out_dim, kernel_size=1)
+
+        self.geo_q, self.geo_k, self.geo_v = conv(self.geo_dim), conv(self.geo_dim), conv(self.geo_dim)
+        self.sem_q, self.sem_k, self.sem_v = conv(self.sem_dim), conv(self.sem_dim), conv(self.sem_dim)
+        self.temp_q, self.temp_k, self.temp_v = conv(self.temporal_dim), conv(self.temporal_dim), conv(self.temporal_dim)
+        self.pattern_q = nn.Linear(dim, self.geo_dim)
+        self.pattern_k = nn.Linear(dim, self.geo_dim)
+        self.pattern_v = nn.Linear(dim, self.geo_dim)
+        self.projection = nn.Linear(dim, dim)
+        self.dropout = nn.Dropout(dropout)
+
+    @staticmethod
+    def _conv(x, layer):
+        return layer(x.permute(0, 3, 1, 2)).permute(0, 2, 3, 1)
+
+    def _spatial_branch(self, x, q_layer, k_layer, v_layer, heads, dim, mask):
+        b, t, n, _ = x.shape
+        q, k, v = (self._conv(x, layer) for layer in (q_layer, k_layer, v_layer))
+        q = q.reshape(b, t, n, heads, self.head_dim).permute(0, 1, 3, 2, 4)
+        k = k.reshape(b, t, n, heads, self.head_dim).permute(0, 1, 3, 2, 4)
+        v = v.reshape(b, t, n, heads, self.head_dim).permute(0, 1, 3, 2, 4)
+        scores = (q @ k.transpose(-2, -1)) * self.scale
+        if mask is not None:
+            scores = scores.masked_fill(mask.view(1, 1, 1, n, n), torch.finfo(scores.dtype).min)
+        weights = self.dropout(scores.softmax(dim=-1))
+        out = weights @ v
+        return out.transpose(2, 3).reshape(b, t, n, dim)
+
+    def forward(self, x, x_patterns, pattern_keys, geo_mask, sem_mask):
+        b, t, n, _ = x.shape
+        # Temporal attention is per sensor across the observed time window.
+        tq, tk, tv = (self._conv(x, layer) for layer in (self.temp_q, self.temp_k, self.temp_v))
+        tq = tq.permute(0, 2, 1, 3).reshape(b, n, t, self.temporal_heads, self.head_dim).transpose(2, 3)
+        tk = tk.permute(0, 2, 1, 3).reshape(b, n, t, self.temporal_heads, self.head_dim).transpose(2, 3)
+        tv = tv.permute(0, 2, 1, 3).reshape(b, n, t, self.temporal_heads, self.head_dim).transpose(2, 3)
+        tw = self.dropout(((tq @ tk.transpose(-2, -1)) * self.scale).softmax(dim=-1))
+        temporal = (tw @ tv).transpose(2, 3).reshape(b, n, t, self.temporal_dim).transpose(1, 2)
+
+        # Pattern queries attend over training-derived patterns for each node.
+        # Their values are added to the geographic keys, modeling propagation delay.
+        px = self.pattern_embedding(x_patterns)
+        pk = self.pattern_embedding(pattern_keys)
+        pq, pkey, pvalue = self.pattern_q(px), self.pattern_k(pk), self.pattern_v(pk)
+        pweights = ((pq.unsqueeze(-2) @ pkey.unsqueeze(0).unsqueeze(0).transpose(-2, -1)) * self.scale).softmax(-1)
+        delay_key = (pweights @ pvalue.unsqueeze(0).unsqueeze(0)).squeeze(-2)
+
+        geo_k = self._conv(x, self.geo_k) + delay_key
+        # Geographic attention uses the delay-enriched keys.
+        gq = self._conv(x, self.geo_q).reshape(b, t, n, self.geo_heads, self.head_dim).permute(0, 1, 3, 2, 4)
+        gk = geo_k.reshape(b, t, n, self.geo_heads, self.head_dim).permute(0, 1, 3, 2, 4)
+        gv = self._conv(x, self.geo_v).reshape(b, t, n, self.geo_heads, self.head_dim).permute(0, 1, 3, 2, 4)
+        gs = (gq @ gk.transpose(-2, -1)) * self.scale
+        gs = gs.masked_fill(geo_mask.view(1, 1, 1, n, n), torch.finfo(gs.dtype).min)
+        gw = self.dropout(gs.softmax(-1))
+        geographic = (gw @ gv).transpose(2, 3).reshape(b, t, n, self.geo_dim)
+
+        semantic = self._spatial_branch(x, self.sem_q, self.sem_k, self.sem_v,
+                                        self.sem_heads, self.sem_dim, sem_mask)
+        return self.dropout(self.projection(torch.cat((temporal, geographic, semantic), dim=-1)))
+
+
+class STEncoderBlock(nn.Module):
+    def __init__(self, dim, dropout=0.1, mlp_ratio=2, attention_heads=(4, 2, 2)):
+        super().__init__()
+        self.norm1 = nn.LayerNorm(dim, eps=1e-6)
+        self.attention = STSelfAttention(dim, *attention_heads, dropout=dropout)
+        self.norm2 = nn.LayerNorm(dim, eps=1e-6)
+        self.mlp = nn.Sequential(nn.Linear(dim, dim * mlp_ratio), nn.GELU(),
+                                 nn.Dropout(dropout), nn.Linear(dim * mlp_ratio, dim), nn.Dropout(dropout))
+
+    def forward(self, x, x_patterns, pattern_keys, geo_mask, sem_mask):
+        x = x + self.attention(self.norm1(x), x_patterns, pattern_keys, geo_mask, sem_mask)
+        return x + self.mlp(self.norm2(x))
 
 
 class PDFormer(nn.Module):
-    """
-    PDFormer: Propagation Delay-Aware Spatio-Temporal Transformer
-    Complete model mapping historical traffic sequence (B, T_in, N)
-    to future forecasts (B, T_out, N).
-    """
-    def __init__(
-        self,
-        num_nodes=307,
-        in_dim=1,
-        history_len=12,
-        forecast_len=12,
-        d_model=32,
-        num_heads=2,
-        d_ff=64,
-        num_layers=2,
-        dropout=0.1,
-        adj_matrix=None
-    ):
+    """PDFormer core; inputs and outputs are (batch, time, sensors)."""
+
+    def __init__(self, num_nodes=307, in_dim=1, history_len=12, forecast_len=12,
+                 d_model=32, num_heads=2, d_ff=128, num_layers=3, dropout=0.1,
+                 adj_matrix=None, dtw_matrix=None, pattern_keys=None, lap_pos_enc=None,
+                 semantic_neighbors=5, short_hops=4):
         super().__init__()
-        self.num_nodes = num_nodes
-        self.history_len = history_len
-        self.forecast_len = forecast_len
-
-        self.embedding = SpatialTemporalEmbedding(num_nodes, in_dim, d_model, history_len)
-        self.layers = nn.ModuleList([
-            SpatioTemporalTransformerLayer(d_model, num_heads, d_ff, dropout)
-            for _ in range(num_layers)
-        ])
-
-        # Projection head: maps flattened temporal features (T_in * d_model) -> forecast_len
-        self.head = nn.Sequential(
-            nn.Linear(history_len * d_model, d_ff),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(d_ff, forecast_len)
-        )
-
-        # Register geographic mask buffer
-        if adj_matrix is not None:
-            # Ensure float tensor and self-loops
-            adj_t = torch.tensor(adj_matrix, dtype=torch.float32)
-            # Binary connectivity mask (including reachable neighbors)
-            geo_mask = (adj_t > 0).float()
-            geo_mask.fill_diagonal_(1.0)
-            self.register_buffer('geo_mask', geo_mask)
+        del in_dim, num_heads  # The original implementation uses a single flow feature and split heads.
+        self.num_nodes, self.history_len, self.forecast_len = num_nodes, history_len, forecast_len
+        if d_model % 8 == 0:
+            attention_heads = (4, 2, 2)
+        elif d_model % 4 == 0:
+            attention_heads = (2, 1, 1)
         else:
-            self.register_buffer('geo_mask', None)
+            raise ValueError("d_model must be divisible by four for the spatial/temporal attention heads")
+        if lap_pos_enc is None:
+            lap_pos_enc = np.eye(num_nodes, min(8, num_nodes), dtype=np.float32)
+        if pattern_keys is None:
+            pattern_keys = np.zeros((num_nodes, 1, 3), dtype=np.float32)
+        if adj_matrix is None:
+            adj_matrix = np.eye(num_nodes, dtype=np.float32)
+        if dtw_matrix is None:
+            dtw_matrix = np.eye(num_nodes, dtype=np.float32)
+
+        geo_mask, sem_mask = self._build_masks(adj_matrix, dtw_matrix, semantic_neighbors, short_hops)
+        self.register_buffer("geo_mask", torch.as_tensor(geo_mask, dtype=torch.bool))
+        self.register_buffer("sem_mask", torch.as_tensor(sem_mask, dtype=torch.bool))
+        self.register_buffer("pattern_keys", torch.as_tensor(pattern_keys, dtype=torch.float32))
+        self.embedding = DataEmbedding(num_nodes, d_model, lap_pos_enc, dropout)
+        self.layers = nn.ModuleList([STEncoderBlock(d_model, dropout, max(2, d_ff // d_model), attention_heads)
+                                     for _ in range(num_layers)])
+        skip_dim = d_model * 2
+        self.skip_convs = nn.ModuleList([nn.Conv2d(d_model, skip_dim, 1) for _ in range(num_layers)])
+        self.time_projection = nn.Conv2d(history_len, forecast_len, 1)
+        self.output_projection = nn.Conv2d(skip_dim, 1, 1)
+        # Learn a per-horizon persistence residual. This gives each forecast
+        # step a direct path from the latest observation, including horizons
+        # whose nonlinear output head may become inactive.
+        self.persistence_scale = nn.Parameter(torch.zeros(forecast_len))
+
+    @staticmethod
+    def _build_masks(adj_matrix, dtw_matrix, semantic_neighbors, short_hops):
+        adjacency = np.asarray(adj_matrix) > 0
+        n = adjacency.shape[0]
+        # Directed shortest hop distances, matching the road-edge direction.
+        hops = np.where(adjacency, 1.0, np.inf).astype(np.float32)
+        np.fill_diagonal(hops, 0.0)
+        for k in range(n):
+            hops = np.minimum(hops, hops[:, k:k + 1] + hops[k:k + 1, :])
+        geo_mask = hops >= short_hops
+        np.fill_diagonal(geo_mask, False)
+        dtw = np.asarray(dtw_matrix, dtype=np.float32)
+        allowed = np.argsort(dtw, axis=1)[:, :max(1, semantic_neighbors)]
+        sem_mask = np.ones((n, n), dtype=bool)
+        sem_mask[np.arange(n)[:, None], allowed] = False
+        np.fill_diagonal(sem_mask, False)
+        return geo_mask, sem_mask
 
     def forward(self, x):
-        """
-        Args:
-            x: Tensor of shape (B, T_in, N) or (B, T_in, N, 1)
-        Returns:
-            Tensor of shape (B, T_out, N)
-        """
-        if x.dim() == 3:
-            x = x.unsqueeze(-1)  # (B, T_in, N, 1)
-
-        # Spatio-temporal embedding
-        h = self.embedding(x)  # (B, T_in, N, d_model)
-
-        # Pass through Spatio-Temporal Transformer layers
-        for layer in self.layers:
-            h = layer(h, self.geo_mask)
-
-        # h shape: (B, T_in, N, d_model)
-        # Reshape to (B, N, T_in * d_model)
-        B, T, N, D = h.shape
-        h_flat = h.permute(0, 2, 1, 3).contiguous().view(B, N, T * D)
-
-        # Output projection head: (B, N, forecast_len)
-        out = self.head(h_flat)
-
-        # Return (B, forecast_len, N)
-        return out.permute(0, 2, 1).contiguous()
+        if x.ndim == 4:
+            x = x[..., 0]
+        if x.shape[-1] != self.num_nodes:
+            raise ValueError(f"Expected {self.num_nodes} sensor features, received {x.shape[-1]}")
+        b, t, n = x.shape
+        if t != self.history_len or n != self.num_nodes:
+            raise ValueError(f"Expected input (batch,{self.history_len},{self.num_nodes}), got {tuple(x.shape)}")
+        padded = F.pad(x, (0, 0, 2, 0))
+        x_patterns = torch.stack([padded[:, i:i + t, :] for i in range(3)], dim=-1)
+        h = self.embedding(x)
+        skip = 0
+        for layer, skip_conv in zip(self.layers, self.skip_convs):
+            h = layer(h, x_patterns, self.pattern_keys, self.geo_mask, self.sem_mask)
+            skip = skip + skip_conv(h.permute(0, 3, 2, 1))
+        # Project history steps to forecast steps, then channels to flow.
+        y = self.time_projection(F.relu(skip.permute(0, 3, 2, 1)))
+        y = self.output_projection(F.relu(y.permute(0, 3, 2, 1)))
+        y = y.permute(0, 3, 2, 1).squeeze(-1).contiguous()
+        return y + self.persistence_scale.view(1, self.forecast_len, 1) * x[:, -1:, :]
 
 
 def count_parameters(model):
-    """Count trainable parameters."""
-    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+    return sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad)

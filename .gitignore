@@ -32,3 +32,6 @@ data/processed/train_x.npy
 data/processed/train_y.npy
 data/processed/val_x.npy
 data/processed/val_y.npy
+
+# Large Audited Tensors (Regenerable via python -m src.data.audited_split; exceed GitHub 100MB limit)
+data/processed_audited/*.npy

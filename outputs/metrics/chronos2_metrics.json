@@ -1,0 +1,37 @@
+{
+    "model": "Chronos-2 LoRA Fine-Tuned",
+    "base_model": "amazon/chronos-2",
+    "approach": "Transfer Learning with LoRA",
+    "timestamp": "2026-10-27T09:51:25",
+    "hardware": {
+        "model_type": "Chronos-2 (T5 Encoder Architecture)",
+        "base_model_id": "amazon/chronos-2",
+        "is_fine_tuned": true,
+        "device": "cuda",
+        "torch_dtype": "torch.bfloat16",
+        "total_parameters": 119477664,
+        "trainable_parameters": 0,
+        "checkpoint_path": "C:\\Users\\Lenovo\\OneDrive\\Desktop\\AUCML\\traffic-congestion-ml\\outputs\\checkpoints\\chronos2_lora\\finetuned-ckpt",
+        "context_length": 8192,
+        "prediction_length": 1024
+    },
+    "metrics": {
+        "mae_15min": 19.21164695019414,
+        "rmse_15min": 30.607804383368265,
+        "r2_15min": 0.9620536659885771,
+        "mae_30min": 21.010344876450176,
+        "rmse_30min": 33.706972845575585,
+        "r2_30min": 0.9538530671557698,
+        "mae_60min": 24.325445146076845,
+        "rmse_60min": 38.71341934427676,
+        "r2_60min": 0.9394016837610502,
+        "mae_overall": 21.131104502887002,
+        "rmse_overall": 33.87522681230522,
+        "r2_overall": 0.9534746000287343,
+        "num_eval_samples": 100,
+        "inference_time_seconds": 366.16,
+        "latency_ms_per_window": 3661.55,
+        "overall_mae": 21.131104502887002,
+        "overall_rmse": 33.87522681230522
+    }
+}

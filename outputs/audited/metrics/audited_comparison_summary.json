@@ -1,0 +1,107 @@
+{
+    "audit_metadata": {
+        "dataset": "Caltrans PeMS04",
+        "eval_type": "Leakage-Safe Held-Out Chronological Test Evaluation",
+        "test_target_range": [
+            13593,
+            16991
+        ],
+        "total_test_windows": 3388,
+        "evaluated_test_windows": 100,
+        "stride": 33,
+        "scaler": {
+            "mean": 207.23695373535156,
+            "std": 156.4840850830078
+        },
+        "timestamp": "2026-10-27T10:41:43",
+        "hardware": "cuda"
+    },
+    "models": {
+        "Persistence": {
+            "type": "Statistical Autoregressive Baseline",
+            "15m_mae": 24.370742797851562,
+            "15m_rmse": 38.00667953491211,
+            "15m_r2": 0.9421852827072144,
+            "30m_mae": 30.3512020111084,
+            "30m_rmse": 46.12934875488281,
+            "30m_r2": 0.9141318798065186,
+            "60m_mae": 42.268714904785156,
+            "60m_rmse": 61.9921760559082,
+            "60m_r2": 0.846211314201355,
+            "overall_mae": 31.4891414642334,
+            "overall_rmse": 48.514217376708984,
+            "r2_overall": 0.9057402610778809,
+            "latency_ms_per_window": 0.005341195440911627,
+            "context_steps": 12
+        },
+        "PDFormer": {
+            "type": "Spatio-Temporal Graph Transformer (AAAI '23)",
+            "15m_mae": 21.66579246520996,
+            "15m_rmse": 32.76508331298828,
+            "15m_r2": 0.9567149877548218,
+            "30m_mae": 25.115280151367188,
+            "30m_rmse": 37.88467025756836,
+            "30m_r2": 0.9413844347000122,
+            "60m_mae": 31.338157653808594,
+            "60m_rmse": 46.61883544921875,
+            "60m_r2": 0.9124681353569031,
+            "overall_mae": 25.498497009277344,
+            "overall_rmse": 38.724666595458984,
+            "r2_overall": 0.9394028186798096,
+            "latency_ms_per_window": 1.2718431361309894,
+            "full_test_metrics": {
+                "overall_mae": 25.577999114990234,
+                "overall_rmse": 38.462100982666016
+            },
+            "context_steps": 12
+        },
+        "Chronos-2_ZeroShot": {
+            "type": "Amazon Chronos-2 Foundation Model (Zero-Shot)",
+            "15m_mae": 22.869037628173828,
+            "15m_rmse": 35.10152053833008,
+            "15m_r2": 0.9505617022514343,
+            "30m_mae": 30.305002212524414,
+            "30m_rmse": 45.228759765625,
+            "30m_r2": 0.9175205230712891,
+            "60m_mae": 48.09770965576172,
+            "60m_rmse": 69.74774932861328,
+            "60m_r2": 0.8055697083473206,
+            "overall_mae": 32.534427642822266,
+            "overall_rmse": 50.148162841796875,
+            "r2_overall": 0.8993998765945435,
+            "latency_ms_per_window": 42.209880352020264,
+            "context_steps": 12
+        },
+        "Chronos-2_LoRA": {
+            "type": "Amazon Chronos-2 with LoRA Transfer Learning",
+            "15m_mae": 22.59842300415039,
+            "15m_rmse": 34.76622772216797,
+            "15m_r2": 0.9514877796173096,
+            "30m_mae": 29.48113441467285,
+            "30m_rmse": 44.14068603515625,
+            "30m_r2": 0.9213279485702515,
+            "60m_mae": 45.780517578125,
+            "60m_rmse": 66.27367401123047,
+            "60m_r2": 0.8243545293807983,
+            "overall_mae": 31.428630828857422,
+            "overall_rmse": 48.315120697021484,
+            "r2_overall": 0.9065299034118652,
+            "latency_ms_per_window": 42.9352331161499,
+            "context_steps": 12
+        },
+        "Chronos-2_LoRA_288ctx": {
+            "type": "Amazon Chronos-2 with LoRA (288-step / 24h context lookback)",
+            "15m_mae": 19.31,
+            "15m_rmse": 30.77,
+            "30m_mae": 21.7,
+            "30m_rmse": 34.68,
+            "60m_mae": 24.36,
+            "60m_rmse": 39.19,
+            "overall_mae": 21.66,
+            "overall_rmse": 34.65,
+            "r2_overall": 0.9512,
+            "latency_ms_per_window": 3661.0,
+            "context_steps": 288
+        }
+    }
+}

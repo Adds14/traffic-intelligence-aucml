@@ -1,49 +1,76 @@
 {
     "model": "PDFormer",
     "paper_reference": "Jiang et al., AAAI 2023",
-    "timestamp": "2026-10-11T19:59:05",
+    "timestamp": "2026-10-27T11:55:48",
     "architecture": {
         "d_model": 32,
-        "num_heads": 2,
-        "num_layers": 2,
-        "total_parameters": 61356
+        "num_heads": 8,
+        "heads_per_branch": {
+            "geographic": 4,
+            "semantic": 2,
+            "temporal": 2
+        },
+        "num_layers": 3,
+        "total_parameters": 50137,
+        "components": [
+            "temporal self-attention",
+            "short-range geographic attention",
+            "long-range DTW semantic attention",
+            "traffic-pattern delay-aware geographic key transform",
+            "Laplacian positional encoding",
+            "multi-step skip projection",
+            "trainable per-horizon persistence residual"
+        ],
+        "semantic_neighbors": 5,
+        "short_hops": 4,
+        "pattern_key_source": "training split: quantile-binned 3-step flow patterns",
+        "dtw_source": "training split: exact DTW on normalized hourly mean flow profiles"
     },
     "training": {
         "epochs_trained": 12,
-        "batch_size": 64,
+        "batch_size": 32,
         "learning_rate": 0.001,
-        "training_time_seconds": 605.4,
-        "best_val_loss": 0.0321,
+        "training_time_seconds": 2932.25,
+        "best_val_loss": 0.0322,
+        "train_windows_used": 10172,
+        "validation_windows_used": 3375,
+        "test_windows_evaluated": 3376,
+        "evaluation_scope": "full held-out test split",
         "history": {
             "train_loss": [
-                0.0482,
-                0.0421,
-                0.0395,
-                0.0372,
-                0.0358,
-                0.0346,
-                0.0335,
-                0.0329,
-                0.0321,
-                0.0315,
-                0.0308,
-                0.0302
+                0.11280968302638276,
+                0.06761571627883416,
+                0.06567473265594281,
+                0.06480999942283211,
+                0.04123775440168643,
+                0.03344409025432366,
+                0.03274479879171781,
+                0.03235710805879449,
+                0.03218447261800369,
+                0.031939810130206296,
+                0.03175090721357356,
+                0.03162471125921551
             ],
             "val_loss": [
-                0.0371,
-                0.0363,
-                0.0357,
-                0.035,
-                0.035,
-                0.0342,
-                0.0333,
-                0.0331,
-                0.0328,
-                0.0326,
-                0.0324,
-                0.0321
+                0.07019156168373127,
+                0.06886145184343716,
+                0.06729902091594238,
+                0.06804411819661563,
+                0.03345504609586777,
+                0.03324578574832247,
+                0.032490761258709686,
+                0.033464347627365366,
+                0.03278886252038954,
+                0.03251148158253856,
+                0.03221550877733191,
+                0.033031962974489015
             ]
         }
+    },
+    "calibration": {
+        "method": "per-horizon per-sensor affine correction with shrinkage",
+        "fit_partition": "validation only",
+        "shrinkage": 1000.0
     },
     "metrics": {
         "horizons": {
@@ -52,64 +79,69 @@
                 "horizon_step": 3,
                 "horizon_minutes": 15,
                 "label": "Horizon 3 (15 min)",
-                "mae": 21.910892486572266,
-                "rmse": 32.98263168334961
+                "mae": 21.3856258392334,
+                "rmse": 32.810813903808594
             },
             "horizon_6": {
                 "step_index": 5,
                 "horizon_step": 6,
                 "horizon_minutes": 30,
                 "label": "Horizon 6 (30 min)",
-                "mae": 24.996665954589844,
-                "rmse": 37.36171340942383
+                "mae": 24.22022247314453,
+                "rmse": 36.761451721191406
             },
             "horizon_12": {
                 "step_index": 11,
                 "horizon_step": 12,
                 "horizon_minutes": 60,
                 "label": "Horizon 12 (60 min)",
-                "mae": 31.772306442260742,
-                "rmse": 46.62547302246094
+                "mae": 30.376338958740234,
+                "rmse": 44.59834289550781
             }
         },
         "overall": {
-            "mae": 25.591428756713867,
-            "rmse": 38.455535888671875
+            "mae": 24.78879737854004,
+            "rmse": 37.63185501098633
         },
-        "mae_15min": 21.910892486572266,
-        "rmse_15min": 32.98263168334961,
-        "mae_30min": 24.996665954589844,
-        "rmse_30min": 37.36171340942383,
-        "mae_60min": 31.772306442260742,
-        "mae_overall": 25.591428756713867,
-        "rmse_overall": 38.455535888671875,
-        "r2_15min": 0.9563056826591492,
-        "r2_30min": 0.9439388513565063,
-        "r2_60min": 0.9128035306930542,
-        "r2_overall": 0.9406370520591736
+        "mae_15min": 21.3856258392334,
+        "rmse_15min": 32.810813903808594,
+        "mae_30min": 24.22022247314453,
+        "rmse_30min": 36.761451721191406,
+        "mae_60min": 30.376338958740234,
+        "rmse_60min": 44.59834289550781,
+        "mae_overall": 24.78879737854004,
+        "rmse_overall": 37.63185501098633,
+        "r2_15min": 0.9564672820270061,
+        "r2_30min": 0.9453547671437263,
+        "r2_60min": 0.919612430036068,
+        "r2_overall": 0.9427426718175411,
+        "overall_mae": 24.78879737854004,
+        "overall_rmse": 37.63185501098633,
+        "overall_r2": 0.9427426718175411
     },
     "per_horizon": {
         "horizon_3": {
-            "MAE": 21.910892486572266,
-            "RMSE": 32.98263168334961,
+            "MAE": 21.3856258392334,
+            "RMSE": 32.810813903808594,
             "horizon_step": 3,
             "horizon_minutes": 15
         },
         "horizon_6": {
-            "MAE": 24.996665954589844,
-            "RMSE": 37.36171340942383,
+            "MAE": 24.22022247314453,
+            "RMSE": 36.761451721191406,
             "horizon_step": 6,
             "horizon_minutes": 30
         },
         "horizon_12": {
-            "MAE": 31.772306442260742,
-            "RMSE": 46.62547302246094,
+            "MAE": 30.376338958740234,
+            "RMSE": 44.59834289550781,
             "horizon_step": 12,
             "horizon_minutes": 60
         }
     },
     "overall": {
-        "MAE": 25.591428756713867,
-        "RMSE": 38.455535888671875
+        "MAE": 24.78879737854004,
+        "RMSE": 37.63185501098633,
+        "R2": 0.9427426718175411
     }
 }

@@ -53,6 +53,21 @@ models:
     epochs: 100
     early_stopping_patience: 15
 
+  chronos2:
+    name: "Chronos-2 (LoRA Transfer Learning)"
+    model_id: "amazon/chronos-2"
+    description: "Amazon Chronos-2 Universal Time Series Foundation Model with LoRA parameter-efficient fine-tuning"
+    paper: "Ansari et al., 2024 / Chronos-2 Technical Report"
+    finetune_mode: "lora"
+    lora_r: 8
+    lora_alpha: 16
+    context_length: 288  # 24 hours (288 5-min intervals)
+    prediction_length: 12 # 60 minutes
+    learning_rate: 0.0001
+    batch_size: 32
+    num_steps: 300
+    checkpoint_dir: "outputs/checkpoints/chronos2_lora"
+
 # Evaluation
 evaluation:
   metrics: ["MAE", "RMSE"]

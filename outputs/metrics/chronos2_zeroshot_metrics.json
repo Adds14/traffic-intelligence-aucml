@@ -1,0 +1,23 @@
+{
+    "model": "Chronos-2 Zero-Shot",
+    "base_model": "amazon/chronos-2",
+    "approach": "Zero-Shot Foundation Model",
+    "timestamp": "2026-10-27T09:53:44",
+    "metrics": {
+        "mae_15min": 19.160231628057737,
+        "rmse_15min": 30.787629681565313,
+        "r2_15min": 0.9614169843711201,
+        "mae_30min": 22.21879297063518,
+        "rmse_30min": 35.12918926369848,
+        "r2_30min": 0.9504736220062594,
+        "mae_60min": 26.71327770401224,
+        "rmse_60min": 41.84814265258281,
+        "r2_60min": 0.930272544006521,
+        "mae_overall": 22.36904496646805,
+        "rmse_overall": 35.91862990960403,
+        "r2_overall": 0.948018098672575,
+        "num_eval_samples": 50,
+        "inference_time_seconds": 137.14,
+        "latency_ms_per_window": 2742.73
+    }
+}

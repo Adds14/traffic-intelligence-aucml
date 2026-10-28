@@ -15,6 +15,7 @@ import argparse
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.data import TensorDataset, DataLoader
 import matplotlib
 matplotlib.use('Agg')
@@ -24,7 +25,9 @@ import matplotlib.pyplot as plt
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, PROJECT_ROOT)
 
-from src.models.pdformer import PDFormer
+from src.models.pdformer import PDFormer, count_parameters
+from src.models.pdformer_features import build_pdformer_features
+from src.models.pdformer_calibration import fit_affine_calibration, apply_affine_calibration
 from src.evaluation.metrics import evaluate_forecast, format_results_table
 
 
@@ -40,15 +43,18 @@ def masked_mae_loss(y_pred, y_true, null_val=0.0):
 
 
 def train_model(
-    epochs=5,
-    batch_size=64,
+    epochs=1,
+    batch_size=4,
     lr=0.001,
     d_model=32,
     num_heads=2,
-    num_layers=2,
-    max_train_samples=2500,
+    num_layers=3,
+    max_train_samples=None,
+    max_test_samples=None,
     seed=42,
-    eval_only=False
+    eval_only=False,
+    resume=False,
+    warm_start=False
 ):
     # Set seed
     torch.manual_seed(seed)
@@ -65,6 +71,8 @@ def train_model(
         os.makedirs(d, exist_ok=True)
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    if device.type == 'cpu':
+        torch.set_num_threads(min(torch.get_num_threads(), 8))
     print("=" * 65)
     print("PDFormer Training & Evaluation Pipeline")
     print(f"Device: {device} | Epochs: {epochs} | Batch Size: {batch_size}")
@@ -84,29 +92,31 @@ def train_model(
     adj_matrix = np.load(os.path.join(data_dir, 'adj_matrix.npy'))
     scaler = np.load(os.path.join(data_dir, 'scaler.npz'))
 
+    print("Building training-only DTW, traffic-pattern, and Laplacian features...")
+    pdformer_features = build_pdformer_features(PROJECT_ROOT, train_x, adj_matrix)
+
     mean_val = float(scaler['mean'])
     std_val = float(scaler['std'])
 
-    if device.type == 'cuda':
-        print(f"CUDA Acceleration: Training on FULL dataset ({len(train_x)} windows)...")
-    elif max_train_samples and max_train_samples < len(train_x):
+    if max_train_samples and max_train_samples < len(train_x):
         print(f"Subsampling {max_train_samples} training windows for CPU efficiency...")
         train_x = train_x[:max_train_samples]
         train_y = train_y[:max_train_samples]
 
-    val_samples = len(val_x) if device.type == 'cuda' else min(800, len(val_x))
-    val_x = val_x[:val_samples]
-    val_y = val_y[:val_samples]
+    if max_train_samples:
+        # Keep validation chronological and bounded for an explicitly sampled run.
+        val_x = val_x[:min(len(val_x), max(1, int(max_train_samples * 0.2)))]
+        val_y = val_y[:len(val_x)]
 
     train_loader = DataLoader(
         TensorDataset(torch.tensor(train_x, dtype=torch.float32),
                       torch.tensor(train_y, dtype=torch.float32)),
-        batch_size=batch_size, shuffle=True
+        batch_size=batch_size, shuffle=True, pin_memory=(device.type == 'cuda')
     )
     val_loader = DataLoader(
         TensorDataset(torch.tensor(val_x, dtype=torch.float32),
                       torch.tensor(val_y, dtype=torch.float32)),
-        batch_size=batch_size, shuffle=False
+        batch_size=batch_size, shuffle=False, pin_memory=(device.type == 'cuda')
     )
 
     # 2. Instantiate Model
@@ -118,22 +128,31 @@ def train_model(
         forecast_len=12,
         d_model=d_model,
         num_heads=num_heads,
-        d_ff=64,
+        d_ff=128,
         num_layers=num_layers,
         dropout=0.1,
-        adj_matrix=adj_matrix
+        adj_matrix=adj_matrix,
+        dtw_matrix=pdformer_features['dtw_matrix'],
+        pattern_keys=pdformer_features['pattern_keys'],
+        lap_pos_enc=pdformer_features['lap_pos_enc'],
     )
     model = model.to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=1)
-    criterion = nn.SmoothL1Loss()
+    def criterion(pred, target):
+        # Match the project's zero-masked evaluation while training on scaled flow.
+        valid = (target * std_val + mean_val) > 0
+        weights = valid.to(pred.dtype)
+        weights = weights / weights.mean().clamp_min(1e-8)
+        return (F.smooth_l1_loss(pred, target, reduction='none') * weights).mean()
 
     # 3. Training Loop
     history = {'train_loss': [], 'val_loss': []}
     best_val_loss = float('inf')
     best_model_path = os.path.join(checkpoint_dir, 'pdformer_best.pt')
     total_time = 0.0
+    start_epoch = 1
 
     if eval_only:
         print(f"\n[EVAL ONLY] Skipping training. Loading saved checkpoint: {best_model_path}")
@@ -141,11 +160,38 @@ def train_model(
             checkpoint = torch.load(best_model_path, map_location=device, weights_only=False)
             best_val_loss = checkpoint.get('val_loss', 0.0321)
             epochs = checkpoint.get('epoch', epochs)
+            history = checkpoint.get('training_history', history)
+            total_time = checkpoint.get('training_time_seconds', total_time)
     else:
-        print("\nStarting training...")
+        if warm_start:
+            if not os.path.exists(best_model_path):
+                raise FileNotFoundError(f"Cannot warm start; checkpoint not found: {best_model_path}")
+            checkpoint = torch.load(best_model_path, map_location=device, weights_only=False)
+            model.load_state_dict(checkpoint['model_state_dict'], strict=False)
+            best_val_loss = checkpoint.get('val_loss', best_val_loss)
+            history = checkpoint.get('training_history', history)
+            total_time = checkpoint.get('training_time_seconds', total_time)
+            start_epoch = int(checkpoint.get('epochs_completed', checkpoint.get('epoch', 0))) + 1
+            print(f"\n[WARM START] Loaded epoch {start_epoch - 1} weights; resetting optimizer for residual fine-tuning")
+        elif resume:
+            if not os.path.exists(best_model_path):
+                raise FileNotFoundError(f"Cannot resume; checkpoint not found: {best_model_path}")
+            checkpoint = torch.load(best_model_path, map_location=device, weights_only=False)
+            model.load_state_dict(checkpoint['model_state_dict'])
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            if 'scheduler_state_dict' in checkpoint:
+                scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+            best_val_loss = checkpoint.get('val_loss', best_val_loss)
+            history = checkpoint.get('training_history', history)
+            total_time = checkpoint.get('training_time_seconds', total_time)
+            start_epoch = int(checkpoint.get('epoch', 0)) + 1
+            print(f"\n[RESUME] Continuing from checkpoint epoch {start_epoch - 1}; running {epochs} more epoch(s)")
+        else:
+            print("\nStarting training...")
+        prior_time = total_time
         start_time = time.time()
 
-        for epoch in range(1, epochs + 1):
+        for epoch in range(start_epoch, start_epoch + epochs):
             epoch_start = time.time()
             model.train()
             train_losses = []
@@ -159,6 +205,8 @@ def train_model(
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
                 optimizer.step()
                 train_losses.append(loss.item())
+                if len(train_losses) % 100 == 0:
+                    print(f"  epoch {epoch}: {len(train_losses)}/{len(train_loader)} batches", flush=True)
 
             train_loss = float(np.mean(train_losses))
 
@@ -186,25 +234,39 @@ def train_model(
                     'epoch': epoch,
                     'model_state_dict': model.state_dict(),
                     'optimizer_state_dict': optimizer.state_dict(),
+                    'scheduler_state_dict': scheduler.state_dict(),
                     'val_loss': val_loss,
+                    'training_history': history,
+                    'training_time_seconds': prior_time + time.time() - start_time,
                     'config': {
                         'd_model': d_model,
                         'num_heads': num_heads,
                         'num_layers': num_layers,
-                        'num_nodes': num_nodes
+                        'num_nodes': num_nodes,
+                        'd_ff': 128,
+                        'semantic_neighbors': 5,
+                        'short_hops': 4,
+                        'architecture': 'PDFormer-AAAI2023-core-with-persistence-residual'
                     }
                 }, best_model_path)
 
             epoch_time = time.time() - epoch_start
-            print(f"Epoch [{epoch:02d}/{epochs:02d}] | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | Time: {epoch_time:.1f}s {'(best saved)' if is_best else ''}")
+            print(f"Epoch [{epoch:02d}/{start_epoch + epochs - 1:02d}] | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | Time: {epoch_time:.1f}s {'(best saved)' if is_best else ''}")
 
-        total_time = time.time() - start_time
+        total_time = prior_time + time.time() - start_time
         print(f"\nTraining completed in {total_time:.1f} seconds. Best Val Loss: {best_val_loss:.4f}")
+        if os.path.exists(best_model_path):
+            best_checkpoint = torch.load(best_model_path, map_location='cpu', weights_only=False)
+            best_checkpoint['training_history'] = history
+            best_checkpoint['training_time_seconds'] = total_time
+            best_checkpoint['epochs_completed'] = start_epoch + epochs - 1
+            torch.save(best_checkpoint, best_model_path)
 
         # Plot & Save Training Loss Curve
         plt.figure(figsize=(9, 4.5))
-        plt.plot(range(1, epochs + 1), history['train_loss'], label='Train Loss (Smooth L1)', marker='o', color='steelblue')
-        plt.plot(range(1, epochs + 1), history['val_loss'], label='Val Loss (Smooth L1)', marker='s', color='coral')
+        history_epochs = range(1, len(history['train_loss']) + 1)
+        plt.plot(history_epochs, history['train_loss'], label='Train Loss (Smooth L1)', marker='o', color='steelblue')
+        plt.plot(history_epochs, history['val_loss'], label='Val Loss (Smooth L1)', marker='s', color='coral')
         plt.title('PDFormer Training and Validation Convergence (PeMS04)', fontsize=13)
         plt.xlabel('Epoch')
         plt.ylabel('Loss (Normalized scale)')
@@ -218,15 +280,41 @@ def train_model(
 
     # 4. Evaluation on Held-Out Test Set
     print("\nRunning test set inference...")
+    if max_test_samples:
+        test_x = test_x[:max_test_samples]
+        test_y = test_y[:max_test_samples]
     checkpoint = torch.load(best_model_path, map_location=device, weights_only=False)
     if 'config' in checkpoint:
         cfg = checkpoint['config']
         d_model = cfg.get('d_model', d_model)
         num_heads = cfg.get('num_heads', num_heads)
         num_layers = cfg.get('num_layers', num_layers)
-    model.load_state_dict(checkpoint['model_state_dict'])
+    model.load_state_dict(checkpoint['model_state_dict'], strict=False)
     model.to(device)
     model.eval()
+
+    # Fit a small per-sensor, per-horizon correction on validation predictions
+    # only, then apply it once to held-out test forecasts.
+    validation_preds = []
+    with torch.no_grad():
+        for (bx,) in DataLoader(
+            TensorDataset(torch.tensor(val_x, dtype=torch.float32)),
+            batch_size=batch_size, shuffle=False
+        ):
+            validation_preds.append(model(bx.to(device)).cpu().numpy())
+    val_pred_norm = np.concatenate(validation_preds)
+    val_pred_orig = np.maximum(val_pred_norm * std_val + mean_val, 0.0)
+    val_true_orig = val_y * std_val + mean_val
+    calibration_scale, calibration_bias = fit_affine_calibration(val_pred_orig, val_true_orig)
+    calibration_path = os.path.join(checkpoint_dir, 'pdformer_calibration.npz')
+    np.savez_compressed(
+        calibration_path,
+        scale=calibration_scale,
+        bias=calibration_bias,
+        source='chronological validation split only',
+        shrinkage=1000.0
+    )
+    print(f"Saved validation-fitted calibration to {calibration_path}")
 
     test_preds = []
     test_loader = DataLoader(
@@ -243,7 +331,10 @@ def train_model(
     y_pred_norm = np.concatenate(test_preds, axis=0)
 
     # Invert normalization back to original physical scale (vehicles / 5 min)
-    y_pred_orig = y_pred_norm * std_val + mean_val
+    y_pred_orig = apply_affine_calibration(
+        np.maximum(y_pred_norm * std_val + mean_val, 0.0),
+        calibration_scale, calibration_bias
+    )
     y_true_orig = test_y * std_val + mean_val
 
     # Save test predictions
@@ -259,6 +350,16 @@ def train_model(
     # 5. Compute Standard Metrics at 15, 30, 60 min
     horizon_steps = [2, 5, 11]  # Step indices for 3, 6, 12 horizons
     results = evaluate_forecast(y_true_orig, y_pred_orig, horizon_steps, mask_zeros=True)
+    def masked_r2(truth, prediction):
+        valid = truth > 0
+        truth, prediction = truth[valid], prediction[valid]
+        denominator = np.sum((truth - np.mean(truth)) ** 2)
+        return float(1.0 - np.sum((truth - prediction) ** 2) / denominator) if denominator else 0.0
+
+    for step, minutes in zip(horizon_steps, (15, 30, 60)):
+        results[f'r2_{minutes}min'] = masked_r2(y_true_orig[:, step, :], y_pred_orig[:, step, :])
+    results['r2_overall'] = masked_r2(y_true_orig, y_pred_orig)
+    results['r2_overall'] = masked_r2(y_true_orig, y_pred_orig)
 
     # Save metrics JSON
     metrics_record = {
@@ -267,17 +368,40 @@ def train_model(
         'timestamp': time.strftime('%Y-%m-%dT%H:%M:%S'),
         'architecture': {
             'd_model': d_model,
-            'num_heads': num_heads,
+            'num_heads': 8,
+            'heads_per_branch': {'geographic': 4, 'semantic': 2, 'temporal': 2},
             'num_layers': num_layers,
-            'total_parameters': sum(p.numel() for p in model.parameters())
+            'total_parameters': count_parameters(model),
+            'components': [
+                'temporal self-attention',
+                'short-range geographic attention',
+                'long-range DTW semantic attention',
+                'traffic-pattern delay-aware geographic key transform',
+                'Laplacian positional encoding',
+                'multi-step skip projection',
+                'trainable per-horizon persistence residual'
+            ],
+            'semantic_neighbors': 5,
+            'short_hops': 4,
+            'pattern_key_source': 'training split: quantile-binned 3-step flow patterns',
+            'dtw_source': 'training split: exact DTW on normalized hourly mean flow profiles'
         },
         'training': {
-            'epochs_trained': epochs,
+            'epochs_trained': int(checkpoint.get('epochs_completed', checkpoint.get('epoch', epochs))),
             'batch_size': batch_size,
             'learning_rate': lr,
             'training_time_seconds': round(total_time, 2),
             'best_val_loss': round(best_val_loss, 4),
+            'train_windows_used': int(len(train_x)),
+            'validation_windows_used': int(len(val_x)),
+            'test_windows_evaluated': int(len(test_x)),
+            'evaluation_scope': 'first N chronological held-out windows' if max_test_samples else 'full held-out test split',
             'history': history
+        },
+        'calibration': {
+            'method': 'per-horizon per-sensor affine correction with shrinkage',
+            'fit_partition': 'validation only',
+            'shrinkage': 1000.0
         },
         'metrics': results,
         'per_horizon': {
@@ -302,7 +426,8 @@ def train_model(
         },
         'overall': {
             'MAE': results['overall']['mae'],
-            'RMSE': results['overall']['rmse']
+            'RMSE': results['overall']['rmse'],
+            'R2': results['r2_overall']
         }
     }
 
@@ -326,17 +451,27 @@ def train_model(
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Train and evaluate PDFormer model.")
-    parser.add_argument('--epochs', type=int, default=5, help="Number of training epochs")
-    parser.add_argument('--batch_size', type=int, default=64, help="Batch size")
+    parser.add_argument('--epochs', type=int, default=1, help="Number of training epochs")
+    parser.add_argument('--batch_size', type=int, default=4, help="Batch size")
     parser.add_argument('--lr', type=float, default=0.001, help="Learning rate")
-    parser.add_argument('--max_train_samples', type=int, default=2500, help="Max train samples for CPU efficiency")
+    parser.add_argument('--max_train_samples', type=int, default=None, help="Optional limit for a quick exploratory run; default uses every training window")
+    parser.add_argument('--max_test_samples', type=int, default=None, help="Optional limit for CPU evaluation; default evaluates the full test split")
+    parser.add_argument('--d_model', type=int, default=32, help="Embedding width; must be divisible by eight")
+    parser.add_argument('--num_layers', type=int, default=3, help="Number of spatio-temporal encoder blocks")
     parser.add_argument('--eval_only', action='store_true', help="Skip training and evaluate saved checkpoint")
+    parser.add_argument('--resume', action='store_true', help="Continue training from the saved best checkpoint")
+    parser.add_argument('--warm_start', action='store_true', help="Warm-start model weights while resetting optimizer state")
     args = parser.parse_args()
 
     train_model(
         epochs=args.epochs,
         batch_size=args.batch_size,
         lr=args.lr,
+        d_model=args.d_model,
+        num_layers=args.num_layers,
         max_train_samples=args.max_train_samples,
-        eval_only=args.eval_only
+        max_test_samples=args.max_test_samples,
+        eval_only=args.eval_only,
+        resume=args.resume,
+        warm_start=args.warm_start
     )

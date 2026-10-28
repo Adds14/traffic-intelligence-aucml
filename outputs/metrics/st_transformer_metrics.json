@@ -1,0 +1,117 @@
+{
+    "model": "Custom ST-Transformer (Baseline)",
+    "paper_reference": "Jiang et al., AAAI 2023",
+    "timestamp": "2026-10-11T19:59:05",
+    "architecture": {
+        "d_model": 32,
+        "num_heads": 2,
+        "num_layers": 2,
+        "total_parameters": 61356
+    },
+    "training": {
+        "epochs_trained": 12,
+        "batch_size": 64,
+        "learning_rate": 0.001,
+        "training_time_seconds": 605.4,
+        "best_val_loss": 0.0321,
+        "history": {
+            "train_loss": [
+                0.0482,
+                0.0421,
+                0.0395,
+                0.0372,
+                0.0358,
+                0.0346,
+                0.0335,
+                0.0329,
+                0.0321,
+                0.0315,
+                0.0308,
+                0.0302
+            ],
+            "val_loss": [
+                0.0371,
+                0.0363,
+                0.0357,
+                0.035,
+                0.035,
+                0.0342,
+                0.0333,
+                0.0331,
+                0.0328,
+                0.0326,
+                0.0324,
+                0.0321
+            ]
+        }
+    },
+    "metrics": {
+        "horizons": {
+            "horizon_3": {
+                "step_index": 2,
+                "horizon_step": 3,
+                "horizon_minutes": 15,
+                "label": "Horizon 3 (15 min)",
+                "mae": 21.910892486572266,
+                "rmse": 32.98263168334961
+            },
+            "horizon_6": {
+                "step_index": 5,
+                "horizon_step": 6,
+                "horizon_minutes": 30,
+                "label": "Horizon 6 (30 min)",
+                "mae": 24.996665954589844,
+                "rmse": 37.36171340942383
+            },
+            "horizon_12": {
+                "step_index": 11,
+                "horizon_step": 12,
+                "horizon_minutes": 60,
+                "label": "Horizon 12 (60 min)",
+                "mae": 31.772306442260742,
+                "rmse": 46.62547302246094
+            }
+        },
+        "overall": {
+            "mae": 25.591428756713867,
+            "rmse": 38.455535888671875
+        },
+        "mae_15min": 21.910892486572266,
+        "rmse_15min": 32.98263168334961,
+        "mae_30min": 24.996665954589844,
+        "rmse_30min": 37.36171340942383,
+        "mae_60min": 31.772306442260742,
+        "mae_overall": 25.591428756713867,
+        "rmse_overall": 38.455535888671875,
+        "r2_15min": 0.9563056826591492,
+        "r2_30min": 0.9439388513565063,
+        "r2_60min": 0.9128035306930542,
+        "r2_overall": 0.9406370520591736,
+        "rmse_60min": 46.62547302246094
+    },
+    "per_horizon": {
+        "horizon_3": {
+            "MAE": 21.910892486572266,
+            "RMSE": 32.98263168334961,
+            "horizon_step": 3,
+            "horizon_minutes": 15
+        },
+        "horizon_6": {
+            "MAE": 24.996665954589844,
+            "RMSE": 37.36171340942383,
+            "horizon_step": 6,
+            "horizon_minutes": 30
+        },
+        "horizon_12": {
+            "MAE": 31.772306442260742,
+            "RMSE": 46.62547302246094,
+            "horizon_step": 12,
+            "horizon_minutes": 60
+        }
+    },
+    "overall": {
+        "MAE": 25.591428756713867,
+        "RMSE": 38.455535888671875
+    },
+    "description": "Custom Spatio-Temporal Transformer Baseline"
+}
