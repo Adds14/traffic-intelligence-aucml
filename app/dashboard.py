@@ -613,7 +613,7 @@ st.sidebar.markdown("""
         <span style='font-size: 1.65rem;'>🚦</span>
         <div>
             <h3 style='margin:0; font-size:1.15rem; color:#f8fafc; font-weight:800; letter-spacing:-0.02em;'>Traffic Intelligence</h3>
-            <span class='badge badge-primary' style='font-size:0.68rem; padding: 2px 8px; margin:0;'>AUCML ESE • AI Lab</span>
+            <span class='badge badge-primary' style='font-size:0.68rem; padding: 2px 8px; margin:0;'>AUCML</span>
         </div>
     </div>
 </div>
@@ -646,8 +646,8 @@ st.sidebar.markdown(f"""
 
 st.sidebar.markdown("""
 <div style='margin-top: 14px; padding: 10px 12px; background: rgba(56, 189, 248, 0.05); border: 1px dashed rgba(56, 189, 248, 0.25); border-radius: 8px; font-size: 0.74rem; color: #94a3b8;'>
-    <span style='color:#38bdf8; font-weight:600;'>🎓 Viva Examiner Note:</span><br>
-    Navigate to <b>Dataset & Methodology ⟶ Viva Defense Cheat Sheet</b> for full mathematical formulations & defense rationale.
+    <span style='color:#38bdf8; font-weight:600;'>Notes:</span><br>
+    Navigate to <b>Dataset & Methodology ⟶ Brief Information</b> for full mathematical formulations & defense rationale.
 </div>
 """, unsafe_allow_html=True)
 
