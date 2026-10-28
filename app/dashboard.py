@@ -432,15 +432,11 @@ def normalize_model_key(model_name: str) -> str:
 # ============================================================
 def apply_dark_theme(fig, title=None, height=450):
     """Apply consistent, accessible dark styling to any Plotly figure."""
-    fig.update_layout(
+    layout_kwargs = dict(
         template='plotly_dark',
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='#111827',
         font=dict(color='#cbd5e1', family="sans-serif"),
-        title=dict(
-            text=f"<b>{title}</b>" if title else None,
-            font=dict(size=14, color='#f8fafc')
-        ) if title else None,
         xaxis=dict(
             gridcolor='#1e293b',
             linecolor='#334155',
@@ -467,6 +463,15 @@ def apply_dark_theme(fig, title=None, height=450):
         height=height,
         margin=dict(l=40, r=20, t=50 if title else 25, b=40)
     )
+    if title:
+        layout_kwargs['title'] = dict(
+            text=f"<b>{title}</b>",
+            font=dict(size=14, color='#f8fafc')
+        )
+    else:
+        # Avoid passing empty title object that causes Plotly.js to render 'undefined'
+        layout_kwargs['title_text'] = ""
+    fig.update_layout(**layout_kwargs)
     return fig
 
 
@@ -1270,16 +1275,21 @@ elif page == "Traffic Forecasting":
         borderwidth=1, borderpad=3
     )
 
-    apply_dark_theme(fig_fcst, title=None, height=480)
+    apply_dark_theme(fig_fcst, title=None, height=500)
     fig_fcst.update_layout(
-        xaxis_title="Timeline (5-Minute Intervals: History ⟶ Future Forecast)",
+        xaxis=dict(
+            title=dict(
+                text="Timeline (5-Minute Intervals: History ⟶ Future Forecast)",
+                standoff=14
+            )
+        ),
         yaxis_title="Traffic Flow (vehicles / 5 min)",
         hovermode="x unified",
-        margin=dict(l=40, r=20, t=25, b=65),
+        margin=dict(l=40, r=20, t=25, b=95),
         legend=dict(
             orientation="h",
             yanchor="top",
-            y=-0.18,
+            y=-0.22,
             xanchor="center",
             x=0.5,
             bgcolor="rgba(17, 24, 39, 0.95)",
