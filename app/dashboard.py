@@ -935,10 +935,57 @@ elif page == "Sensor Network":
 
     # Visualization Display
     if view_type == "Topology Graph":
+        # Interactive Corridor Subgraph & Semantic Controls
+        col_sub1, col_sub2 = st.columns([1.6, 1.0])
+        with col_sub1:
+            corridor_choice = st.selectbox(
+                "Freeway Corridor Subgraph",
+                [
+                    "All Corridors (307 Sensors — 5 Major Freeways: US-101, I-880, I-80, I-280, I-580)",
+                    "US-101 Main Backbone (242 Sensors — 100% Interconnected)",
+                    "I-880 East Bay Corridor (37 Sensors — 100% Interconnected)",
+                    "I-80, I-280 & I-580 Corridors (28 Sensors)"
+                ],
+                index=0,
+                key="corridor_subgraph"
+            )
+        with col_sub2:
+            st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+            show_dtw = st.checkbox("Show PDFormer DTW Semantic Links", value=False, help="Visualizes cross-corridor functional traffic shockwave links learned by PDFormer's semantic attention.")
+
+        # Determine visible sensor IDs
+        if "US-101" in corridor_choice and coords_df is not None:
+            active_nodes = sorted(coords_df[coords_df['corridor'] == 'US-101']['sensor_id'].tolist())
+        elif "I-880" in corridor_choice and coords_df is not None:
+            active_nodes = sorted(coords_df[coords_df['corridor'] == 'I-880']['sensor_id'].tolist())
+        elif "I-80" in corridor_choice and coords_df is not None:
+            active_nodes = sorted(coords_df[coords_df['corridor'].isin(['I-80', 'I-280', 'I-580'])]['sensor_id'].tolist())
+        else:
+            active_nodes = list(range(len(predicted_flow)))
+
+        # Load DTW matrix if semantic links are requested
+        dtw_matrix = None
+        if show_dtw:
+            features_path = os.path.join(PATHS['processed'], 'pdformer_features.npz')
+            if os.path.exists(features_path):
+                dtw_matrix = np.load(features_path)['dtw_matrix']
+
+        # Context callout explaining corridor topography
+        st.markdown("""
+        <div class='callout-box' style='margin-bottom: 12px; font-size: 0.86rem;'>
+            <b>💡 Highway Topology Note:</b> Caltrans PeMS04 spans <b>5 major California freeway corridors</b>. 
+            Because inductive loop detectors monitor freeway mainlines rather than off-ramp street grids, 
+            the physical road distance graph contains 12 separate corridor segments. 
+            When you click any sensor (e.g. <b>Sensor #55</b>), its <b>incoming links (cyan)</b> and <b>outgoing links (amber)</b> immediately light up. 
+            Switching to <b>US-101 Main Backbone</b> shows a 100% interconnected 242-sensor network with zero detached nodes.
+        </div>
+        """, unsafe_allow_html=True)
+
         col_graph, col_inspect = st.columns([2.2, 1.0])
         with col_inspect:
             st.markdown("#### 🔍 Sensor Inspector")
-            sensor_id_sel = st.selectbox("Select Sensor Node", list(range(len(predicted_flow))), index=10)
+            default_idx = active_nodes.index(55) if 55 in active_nodes else (active_nodes.index(10) if 10 in active_nodes else 0)
+            sensor_id_sel = st.selectbox("Select Sensor Node", active_nodes, index=default_idx)
             sel_f = float(predicted_flow[sensor_id_sel])
             sel_c = cats[sensor_id_sel]
 
@@ -947,7 +994,7 @@ elif page == "Sensor Network":
 
             # Connections
             conns = get_sensor_connections(sensor_id_sel, df_edges)
-            st.markdown(f"**Network Connectivity:** In: {len(conns['incoming'])} | Out: {len(conns['outgoing'])}")
+            st.markdown(f"**Highway Connections:** In: {len(conns['incoming'])} | Out: {len(conns['outgoing'])}")
             if conns['outgoing']:
                 chips_out = " ".join([f"<span class='chip-pill chip-pill-cyan'>#{c['target']}</span>" for c in conns['outgoing'][:6]])
                 st.markdown(f"<span style='font-size:0.8rem; color:#94a3b8;'>Feeds into:</span> {chips_out}", unsafe_allow_html=True)
@@ -981,7 +1028,10 @@ elif page == "Sensor Network":
                 selected_sensor=sensor_id_sel,
                 model_name=sel_model,
                 horizon_label=sel_horizon_label,
-                time_step=time_step
+                time_step=time_step,
+                node_filter=active_nodes,
+                dtw_matrix=dtw_matrix,
+                show_semantic=show_dtw
             )
             st.plotly_chart(fig_net, use_container_width=True)
 
