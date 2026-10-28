@@ -27,6 +27,9 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
+import importlib
+import src.mapping.network_graph
+importlib.reload(src.mapping.network_graph)
 from src.mapping.network_graph import (
     load_network_layout,
     get_network_edges,
