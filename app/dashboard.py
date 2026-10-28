@@ -695,13 +695,13 @@ if page == "Overview":
     with kpi2:
         st.metric("Observations", "16,992", "5-Min Timestamps")
     with kpi3:
-        st.metric("PDFormer (Best)", f"{pdf_summ['overall_rmse']:.2f}", f"R²: {pdf_summ.get('r2_overall', 0.9427)*100:.1f}%")
+        st.metric("PDFormer Overall MAE", f"{pdf_summ['overall_mae']:.2f}", f"RMSE: {pdf_summ['overall_rmse']:.2f} | R²: {pdf_summ.get('r2_overall', 0.9427)*100:.1f}%")
     with kpi4:
-        st.metric("ST-Transformer", f"{st_summ['overall_rmse']:.2f}", f"R²: {st_summ.get('r2_overall', 0.9406)*100:.1f}%")
+        st.metric("ST-Transformer MAE", f"{st_summ['overall_mae']:.2f}", f"RMSE: {st_summ['overall_rmse']:.2f} | R²: {st_summ.get('r2_overall', 0.9406)*100:.1f}%")
     with kpi5:
-        st.metric("Chronos-2 LoRA", f"{chr_summ['overall_rmse']:.2f}", f"R²: {chr_summ.get('r2_overall', 0.9535)*100:.1f}%")
+        st.metric("Chronos-2 LoRA MAE", f"{chr_summ['overall_mae']:.2f}", f"RMSE: {chr_summ['overall_rmse']:.2f} | R²: {chr_summ.get('r2_overall', 0.9535)*100:.1f}%")
     with kpi6:
-        st.metric("Persistence", f"{per_summ['overall_rmse']:.2f}", f"MAE: {per_summ['15m_mae']:.2f}")
+        st.metric("Persistence MAE", f"{per_summ['overall_mae']:.2f}", f"RMSE: {per_summ['overall_rmse']:.2f}")
 
     st.markdown("---")
 
@@ -766,6 +766,7 @@ if page == "Overview":
                 '15m MAE': round(per_summ['15m_mae'], 2), '15m RMSE': round(per_summ['15m_rmse'], 2),
                 '30m MAE': round(per_summ['30m_mae'], 2), '30m RMSE': round(per_summ['30m_rmse'], 2),
                 '60m MAE': round(per_summ['60m_mae'], 2), '60m RMSE': round(per_summ['60m_rmse'], 2),
+                'Overall MAE': round(per_summ['overall_mae'], 2),
                 'Overall RMSE': round(per_summ['overall_rmse'], 2),
                 'R² Score': f"{round(per_summ.get('r2_overall', 0.9067) * 100, 1)}%"
             },
@@ -775,6 +776,7 @@ if page == "Overview":
                 '15m MAE': round(st_summ['15m_mae'], 2), '15m RMSE': round(st_summ['15m_rmse'], 2),
                 '30m MAE': round(st_summ['30m_mae'], 2), '30m RMSE': round(st_summ['30m_rmse'], 2),
                 '60m MAE': round(st_summ['60m_mae'], 2), '60m RMSE': round(st_summ['60m_rmse'], 2),
+                'Overall MAE': round(st_summ['overall_mae'], 2),
                 'Overall RMSE': round(st_summ['overall_rmse'], 2),
                 'R² Score': f"{round(st_summ.get('r2_overall', 0.9406) * 100, 1)}%"
             },
@@ -784,6 +786,7 @@ if page == "Overview":
                 '15m MAE': round(pdf_summ['15m_mae'], 2), '15m RMSE': round(pdf_summ['15m_rmse'], 2),
                 '30m MAE': round(pdf_summ['30m_mae'], 2), '30m RMSE': round(pdf_summ['30m_rmse'], 2),
                 '60m MAE': round(pdf_summ['60m_mae'], 2), '60m RMSE': round(pdf_summ['60m_rmse'], 2),
+                'Overall MAE': round(pdf_summ['overall_mae'], 2),
                 'Overall RMSE': round(pdf_summ['overall_rmse'], 2),
                 'R² Score': f"{round(pdf_summ.get('r2_overall', 0.9427) * 100, 1)}%"
             },
@@ -793,6 +796,7 @@ if page == "Overview":
                 '15m MAE': round(chr_summ['15m_mae'], 2), '15m RMSE': round(chr_summ['15m_rmse'], 2),
                 '30m MAE': round(chr_summ['30m_mae'], 2), '30m RMSE': round(chr_summ['30m_rmse'], 2),
                 '60m MAE': round(chr_summ['60m_mae'], 2), '60m RMSE': round(chr_summ['60m_rmse'], 2),
+                'Overall MAE': round(chr_summ['overall_mae'], 2),
                 'Overall RMSE': round(chr_summ['overall_rmse'], 2),
                 'R² Score': f"{round(chr_summ.get('r2_overall', 0.9535) * 100, 1)}%"
             }
@@ -1331,8 +1335,34 @@ elif page == "Traffic Forecasting":
         fig_res.update_layout(yaxis_title="Residual Error (veh / 5 min)", hovermode="x unified")
         st.plotly_chart(fig_res, use_container_width=True)
 
+    # Active Observation Overall Error (All 12 Horizons / Full 1-Hour Forecast)
+    st.markdown("#### 🎯 Active Observation Overall Error (All 12 Horizons / Full 1-Hour Forecast)")
+    active_errs = []
+    if y_pdf is not None and model_choice in ["PDFormer", "Both Models", "All Models"]:
+        mae_p = float(np.mean(np.abs(y_pdf - y_actual)))
+        rmse_p = float(np.sqrt(np.mean((y_pdf - y_actual)**2)))
+        active_errs.append(("PDFormer (SOTA)", mae_p, rmse_p))
+    if y_chr is not None and model_choice in ["Chronos-2", "All Models"]:
+        mae_c = float(np.mean(np.abs(y_chr - y_actual)))
+        rmse_c = float(np.sqrt(np.mean((y_chr - y_actual)**2)))
+        active_errs.append(("Chronos-2 LoRA", mae_c, rmse_c))
+    if y_st is not None and model_choice in ["Custom ST-Transformer", "All Models"]:
+        mae_s = float(np.mean(np.abs(y_st - y_actual)))
+        rmse_s = float(np.sqrt(np.mean((y_st - y_actual)**2)))
+        active_errs.append(("Custom ST-Transformer", mae_s, rmse_s))
+    if y_per is not None and model_choice in ["Persistence", "Both Models", "All Models"]:
+        mae_pr = float(np.mean(np.abs(y_per - y_actual)))
+        rmse_pr = float(np.sqrt(np.mean((y_per - y_actual)**2)))
+        active_errs.append(("Persistence", mae_pr, rmse_pr))
+
+    if active_errs:
+        cols_err = st.columns(len(active_errs))
+        for col_e, (m_lbl, m_mae, m_rmse) in zip(cols_err, active_errs):
+            with col_e:
+                st.metric(f"{m_lbl} Overall MAE", f"{m_mae:.2f} veh/5min", f"Overall RMSE: {m_rmse:.2f}", delta_color="inverse")
+
     # Telemetry and Error Analysis Cards
-    st.markdown("#### 🎯 Horizon-Wise Error Telemetry at this Observation")
+    st.markdown("##### ⏱️ Horizon-Wise Milestone Breakdown (+15m, +30m, +60m)")
     c_m1, c_m2, c_m3 = st.columns(3)
     target_steps = [2, 5, 11]
     labels_steps = ["15 Minutes (+3 Steps)", "30 Minutes (+6 Steps)", "60 Minutes (+12 Steps)"]
@@ -1417,16 +1447,27 @@ elif page == "Model Evaluation":
     </div>
     """, unsafe_allow_html=True)
 
-    # Validated Metrics Table
-    st.markdown("### 📊 Validated Results Table (Physical Units: veh / 5 min)")
-    st.caption("Values verified from saved outputs/metrics/ JSON files evaluated on identical held-out test splits.")
-
     pdf_eval = get_model_metric_summary("pdformer")
     per_eval = get_model_metric_summary("persistence")
     st_eval = get_model_metric_summary("st_transformer")
     chr_eval = get_model_metric_summary("chronos2")
     chr_zero = load_metrics("chronos2_zeroshot")
     chr_zero_m = chr_zero['metrics'] if chr_zero and 'metrics' in chr_zero else {}
+
+    # Top-Level KPI Summary Cards for Overall Error
+    k_eval1, k_eval2, k_eval3, k_eval4 = st.columns(4)
+    with k_eval1:
+        st.metric("PDFormer Overall MAE", f"{pdf_eval['overall_mae']:.2f}", f"RMSE: {pdf_eval['overall_rmse']:.2f} (Domain SOTA)")
+    with k_eval2:
+        st.metric("Chronos-2 LoRA MAE", f"{chr_eval['overall_mae']:.2f}", f"RMSE: {chr_eval['overall_rmse']:.2f} (LoRA Transfer)")
+    with k_eval3:
+        st.metric("ST-Transformer MAE", f"{st_eval['overall_mae']:.2f}", f"RMSE: {st_eval['overall_rmse']:.2f} (Baseline)")
+    with k_eval4:
+        st.metric("Persistence MAE", f"{per_eval['overall_mae']:.2f}", f"RMSE: {per_eval['overall_rmse']:.2f} (Baseline)")
+
+    # Validated Metrics Table
+    st.markdown("### 📊 Validated Results Table (Physical Units: veh / 5 min)")
+    st.caption("Values verified from saved outputs/metrics/ JSON files evaluated on identical held-out test splits.")
 
     metrics_records = [
         {
@@ -1435,6 +1476,7 @@ elif page == "Model Evaluation":
             '15m MAE': round(per_eval['15m_mae'], 2), '15m RMSE': round(per_eval['15m_rmse'], 2),
             '30m MAE': round(per_eval['30m_mae'], 2), '30m RMSE': round(per_eval['30m_rmse'], 2),
             '60m MAE': round(per_eval['60m_mae'], 2), '60m RMSE': round(per_eval['60m_rmse'], 2),
+            'Overall MAE': round(per_eval['overall_mae'], 2),
             'Overall RMSE': round(per_eval['overall_rmse'], 2),
             'R² Score': f"{round(per_eval.get('r2_overall', 0.9067) * 100, 1)}%",
             'Latency': '< 0.1 ms'
@@ -1445,6 +1487,7 @@ elif page == "Model Evaluation":
             '15m MAE': round(st_eval['15m_mae'], 2), '15m RMSE': round(st_eval['15m_rmse'], 2),
             '30m MAE': round(st_eval['30m_mae'], 2), '30m RMSE': round(st_eval['30m_rmse'], 2),
             '60m MAE': round(st_eval['60m_mae'], 2), '60m RMSE': round(st_eval['60m_rmse'], 2),
+            'Overall MAE': round(st_eval['overall_mae'], 2),
             'Overall RMSE': round(st_eval['overall_rmse'], 2),
             'R² Score': f"{round(st_eval.get('r2_overall', 0.9406) * 100, 1)}%",
             'Latency': '1.2 ms'
@@ -1455,6 +1498,7 @@ elif page == "Model Evaluation":
             '15m MAE': round(pdf_eval['15m_mae'], 2), '15m RMSE': round(pdf_eval['15m_rmse'], 2),
             '30m MAE': round(pdf_eval['30m_mae'], 2), '30m RMSE': round(pdf_eval['30m_rmse'], 2),
             '60m MAE': round(pdf_eval['60m_mae'], 2), '60m RMSE': round(pdf_eval['60m_rmse'], 2),
+            'Overall MAE': round(pdf_eval['overall_mae'], 2),
             'Overall RMSE': round(pdf_eval['overall_rmse'], 2),
             'R² Score': f"{round(pdf_eval.get('r2_overall', 0.9427) * 100, 1)}%",
             'Latency': '2.1 ms'
@@ -1465,6 +1509,7 @@ elif page == "Model Evaluation":
             '15m MAE': round(chr_eval['15m_mae'], 2), '15m RMSE': round(chr_eval['15m_rmse'], 2),
             '30m MAE': round(chr_eval['30m_mae'], 2), '30m RMSE': round(chr_eval['30m_rmse'], 2),
             '60m MAE': round(chr_eval['60m_mae'], 2), '60m RMSE': round(chr_eval['60m_rmse'], 2),
+            'Overall MAE': round(chr_eval['overall_mae'], 2),
             'Overall RMSE': round(chr_eval['overall_rmse'], 2),
             'R² Score': f"{round(chr_eval.get('r2_overall', 0.9535) * 100, 1)}%",
             'Latency': '3,661 ms'
@@ -1478,6 +1523,7 @@ elif page == "Model Evaluation":
             '15m MAE': round(chr_zero_m.get('mae_15min', 19.16), 2), '15m RMSE': round(chr_zero_m.get('rmse_15min', 30.79), 2),
             '30m MAE': round(chr_zero_m.get('mae_30min', 22.22), 2), '30m RMSE': round(chr_zero_m.get('rmse_30min', 35.13), 2),
             '60m MAE': round(chr_zero_m.get('mae_60min', 26.71), 2), '60m RMSE': round(chr_zero_m.get('rmse_60min', 41.85), 2),
+            'Overall MAE': round(chr_zero_m.get('mae_overall', 22.70), 2),
             'Overall RMSE': round(chr_zero_m.get('rmse_overall', 35.92), 2),
             'R² Score': f"{round(chr_zero_m.get('r2_overall', 0.9480) * 100, 1)}%",
             'Latency': '2,740 ms'
